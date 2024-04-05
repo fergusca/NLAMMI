@@ -1,0 +1,768 @@
+---
+title: "Lake drawdown physical,chemical, & biological characteristics"
+author: "C. Emi Fergus"
+date: "2024-02-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Exploratory plots of lake physical, chemical, and biological characteristics related to potential hydro-alteration rankings (HydrAP). Combined NLA 2007, 2012, and 2017 data and grouped by 5-aggregated ecoregion.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+remove(list=ls())
+
+library(tidyverse)
+library(ggplot2)
+library(ggpubr) # to add p-values to boxplots
+library(rstatix)
+library(forcats)
+library(knitr)
+library(kableExtra)
+
+library(lavaan)
+library(semPlot)
+library(semptools)
+library(devtools)
+
+#############
+## LOAD DATA - NLA 07 & 12 processed for SEM drivers of lake hydrology
+# n = 2066 with 473 variables
+
+nla0712<-read_csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_Water_Level/a_Project_lake_drawdown_effects/Structural_equation_model_project/Data/NLA0712_1ha_HydAP_v9_RESAMPLED.csv")
+
+# Benthic and zooplankton MMIs NLA 07-17 from Alan (email 2/19/24)
+#  n = 3687 w/15 variables
+mmi<-read_csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_Water_Level/Data/Additional_NLA_data/From_Alan_2024_0219/NLA_3yr_bio_out.csv")
+
+# NLA 17 HydrAP and isotpe n = 1210 obs w/279 variables
+hydrap_17<-read.csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/Data_Alan_2023_1104/nla17_hydrap_isotope_full.csv")
+
+# NLA 17 chemistry - long format (n = 22873 w/23 variables)
+nla17_chem<-read_csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_Water_Level/Data/NLA_2017/NLA17_data_original/nla_2017_water_chemistry_chla-data.csv")
+
+# Make chemistry data wide - n = 1210 w/25 variables
+nla17_chem_wide<-nla17_chem%>%
+  pivot_wider(id_cols = c(SITE_ID,VISIT_NO), names_from=ANALYTE, values_from = RESULT)
+
+# Reduce MMI variables
+myvars_mmi<- c("SITE_ID","VISIT_NO","YEAR",
+               "RT_NLA17","ZOOP_COND_2020","BENT_COND_2020",
+           "PTL_COND","NTL_COND","MMI_BENT","MMI_ZOOP_NLA6","TOTLNIND_BENT")
+mmi_red<-mmi%>%
+  select(myvars_mmi)
+
+##############
+## JOIN NLA0712 DATA n = 2066 w/487 vars
+nla0712_mmi<-left_join(nla0712,mmi_red, by=c("SITE_ID","VISIT_NO","YEAR"))%>%
+  rename(HORIZDD_use=HorizDD_use,
+         VERTDD_use=VertDD_use)
+  
+
+#############
+## Join NLA17 data - HydrAP and Chemistry n = 1210 w/302 obs
+nla17_i <-left_join(hydrap_17,nla17_chem_wide, by=c("SITE_ID","VISIT_NO"))%>%
+  mutate(YEAR=2017)%>%
+  select(!RT_NLA17)
+  #mutate(LkArea_km2 = AREA_HA*0.01)
+
+nla17<-left_join(nla17_i,mmi_red, by=c("SITE_ID","VISIT_NO","YEAR"))
+
+# Calculate LULC variables & Rename columns to match NLA0712 variables
+nla17<-nla17%>%
+  mutate(PCT_AGRIC_BSN=PCTCROP2011 + PCTHAY2011,
+         PCT_DEVELOPED_BSN=PCTURBHI2011+PCTURBLO2011+PCTURBMD2011+ PCTURBOP2011,
+         PCT_FOREST_BSN=PCTCONIF2011+PCTDECID2011,
+         PCT_WETLAND_BSN = PCTHBWET2011+PCTWDWET2011)%>%
+  mutate(NTL=NTL*1000)%>%
+  mutate(ECOP5_2015 = case_when(
+    (AG_ECO9 %in% c("WMT","XER")) ~ "WEST",
+    (AG_ECO9 %in% c("NAP","SAP")) ~ "APPS",
+    (AG_ECO9 %in% c("NPL","SPL","TPL"))~"CENPL",
+    (AG_ECO9 %in% c("CPL"))~"CPL",
+    (AG_ECO9 %in% c("UMW"))~"UMW"))%>%
+  mutate(L_VertDD_use=log10(VERTDD_use+0.1),
+         L_HorizDD_use=log10(HORIZDD_use+1))%>%
+  rename(Lake_Origin_use=LAKE_ORGN,
+         LATdd_use=LAT_DD83,
+         LONdd_use=LON_DD83,
+         ECOWSA9_2015=AG_ECO9,
+         ELEVMAX_BSN_m=MaxElev,
+         Precip8110Ws=PRECIP8110,
+         Tmean8110Ws=TMEAN8110,
+         Tmax8110Ws=TMAX8110,
+         POP_DEN = POPDEN2010,
+         BFIWs = BFI)
+
+# Reduce variables to work with in three NLA surveys (07 -2017)
+myvars<- c("SITE_ID","VISIT_NO","YEAR","UID",#"UNIQUE_ID",
+           "ECOWSA9_2015","ECOP5_2015",
+           "LATdd_use","LONdd_use","Lake_Origin_use", 
+           "LkArea_km2","L_LkAreakm2","DpthMx_use","L_DpthMx_use",
+           "ELEV_use","L_ELEV_use","ELEVMAX_BSN_m",
+           "Precip8110Ws","Tmean8110Ws","Tmax8110Ws",
+           "PCT_AGRIC_BSN","PCT_DEVELOPED_BSN","PCT_FOREST_BSN",
+           "PCT_WETLAND_BSN",
+           "BFIWs",
+           "HORIZDD_use","VERTDD_use","L_HorizDD_use","L_VertDD_use",
+           "PTL","NTL","CHLA","COND",
+           "MMI_BENT","MMI_ZOOP_NLA6",
+           "RT_NLA17",#"RT_NLA17_BENT","RT_NLA17_ZOOP",
+           "hap_rank_9","d_excess","E_I","RT_iso",
+           "damht_zmax_full","elev_relief_m","OUTLET_DAMS_red2")
+
+# NLA 2017 vars #"LAKE_ORGN","PCTCONIF2011","PCTDECID2011","PCTGRS2011","PCTHBWET2011","PCTMXFST2011","PCTOW2011","PCTSHRB2011","PCTURBHI2011","PCTURBLO2011","PCTURBMD2011","PCTURBOP2011","PCTWDWET2011","LkPerim_km","L_LkPerimkm","Elev_Pt","PRECIP8110","PSUMPY","PSUMPY_PT","TMAX8110","TMEAN8110","AGKFFACT",
+
+nla17_red<-nla17%>%
+  select(myvars)
+
+nla0712_red<-nla0712_mmi%>%
+  select(myvars)
+
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# DATA PROCESSING
+###################
+## JOIN NLA SURVEYS n = 3276 obs w/ 42 variables
+dat_mod<-bind_rows(nla0712_red,nla17_red)
+
+#################
+# CREATE VARIABLES
+## Follows bins from HydrAP paper (Ecological Indicators 2021)
+#  And reorder HydrAP bins #https://r-graph-gallery.com/267-reorder-a-variable-in-ggplot2.html
+dat_mod<- dat_mod%>%
+  mutate(HydrAP = hap_rank_9)%>%
+  mutate(HydrAP_bin = case_when(HydrAP <3 ~ "Low",
+                                HydrAP <=5 ~ "Moderate",
+                                HydrAP >5 ~ "High"))%>%
+  mutate(HydrAP_bin = fct_relevel(HydrAP_bin, "Low", "Moderate", "High"))%>%
+  mutate(L_PTL = log10(PTL),
+         L_NTL = log10(NTL),
+         L_CHLA = log10(CHLA))%>%
+  mutate(EI_class=case_when(E_I <0.4 ~"Flow_through",
+                            E_I <=0.99 ~"Restricted",
+                            E_I >1 ~ "Closed"))%>%
+  mutate(EI_class = fct_relevel(EI_class, "Closed", "Restricted", "Flow_through"))%>%
+  mutate(ECOP5_2015 = fct_relevel(ECOP5_2015, "APPS","CENPL","CPL","UMW","WEST"))
+
+# Drop observations without HydrAP ranks
+#  n = 1794
+dat_red<- dat_mod%>%
+  filter(!is.na(HydrAP))%>%
+  mutate(HydrAP_bin = fct_relevel(HydrAP_bin, "Low", "Moderate", "High"))
+
+####################
+## NLA 2007 12
+nla0712<- nla0712%>%
+  mutate(HydrAP = hap_rank_9)%>%
+  mutate(HydrAP_bin = case_when(HydrAP <3 ~ "Low",
+                                HydrAP <=5 ~ "Moderate",
+                                HydrAP >5 ~ "High"))%>%
+  mutate(HydrAP_bin = fct_relevel(HydrAP_bin, "Low", "Moderate", "High"))%>%
+  mutate(ECOP5_2015 = fct_relevel(ECOP5_2015, "APPS","CENPL","CPL","UMW","WEST"))
+
+```
+
+
+## Table of HydrAP class and ecoregion
+Potential hydro-alteration classes are grouped as
+HydrAP <3 = "Low"; HydrAP <= 5 = "Moderate"; HydrAP > 5 = "High". Note: missing HydrAP ranks for n=275 sites where dam height could not be gathered but dams were observed by NLA field crew
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#table(dat$HydrAP_bin,dat$HydrAP)
+
+hydrap_count<-dat_mod%>%
+  group_by(ECOP5_2015)%>%
+  count(HydrAP_bin)%>%
+  pivot_wider(names_from=HydrAP_bin, values_from=n)
+
+knitr::kable(hydrap_count, booktabs = TRUE) %>%
+  add_header_above(c(" " = 1, "HydrAP class" = 4))#, caption = "Lake Drawdown condition by HydrAP class")
+```
+
+## Boxplots of Macroinvertebrate MMI by HydrAP rank
+There are n = 335 observations missing MMI_BENT values.
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Boxplot w/ p-values 
+# https://www.datanovia.com/en/blog/how-to-add-p-values-onto-a-grouped-ggplot-using-the-ggpubr-r-package/
+bxp<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "MMI_BENT",
+  color="HydrAP_bin")
+#bxp
+
+# Add p-values onto the box plots
+stat.test <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(MMI_BENT~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+#stat.test
+
+stat.test<-stat.test%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_mmi_box <-bxp+stat_pvalue_manual(
+  stat.test, label="p", y.position = 90, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by = "ECOP5_2015",step.increase = 0.08)#+
+  #scale_y_continuous(expand = expansion(mult = c(0,0.1)))
+
+#my_comparisons <- list(c("Low","Moderate"), c("Low","High"), #c("Moderate","High"))
+
+#hydrap_mmi_box<-ggplot(dat_red, aes(x=HydrAP_bin,y=MMI_BENT_NLA12, #fill=factor(HydrAP),facet.by=ECOP5_2015))+
+#  geom_boxplot(aes(fill=factor(HydrAP_bin),y=MMI_BENT_NLA12),outlier.shape=NA)+
+  #geom_violin(aes(fill=factor(HydrAP),y=MMI_BENT_NLA12),outlier.shape=NA)+
+#  geom_jitter(width=0.1, alpha=0.2)+
+  #stat_compare_means(method="kruskal.test", aes(label=..p.signif..))+
+    #stat_compare_means(comparisons=my_comparisons, label="p.signif")+
+  #stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01)+
+  #stat_compare_means(aes(group=ECOP5_2015),label="p.format")+ #"p.signif"
+#  facet_grid(.~ECOP5_2015)+
+#  theme(
+#    legend.position="none",
+#    plot.title=element_text(size=11))+
+#  ggtitle("Boxplot benthic MMI & HydrAP")+
+#  labs(
+#    x=expression("HydAP rank v.9"),
+#    y=expression("Macroinvert MMI"))
+
+
+# Perform mean comparison after grouping the data by ecoregion
+#compare_means(MMI_BENT_NLA12~HydrAP_bin, data=dat,
+#              group.by = "ECOP5_2015")
+
+# Plot boxplot
+hydrap_mmi_box
+
+```
+
+In the WEST and APPS, macroinvertebrate MMI decreased with greater hydro-alteration potential. In the UMW, macroinvert MMI was lower in Moderate HydrAP ranked lakes compared to Low ranks. In the CPL and CENPL, we see opposite relationships where macroinvert MMI values increase with greater hydro-alteration potential. 
+
+## Boxplots of zooplankton MMI by HydrAP
+Zooplankton MMI were not calculated for NLA 2007. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Drop missing zooplankton MMI n = 2083 remaining out of 3001
+#dat_zoop<- dat_red%>%
+#  filter(!is.na(MMI_ZOOP_NLA6))
+
+# Boxplot w/ p-values 
+# https://www.datanovia.com/en/blog/how-to-add-p-values-onto-a-grouped-ggplot-using-the-ggpubr-r-package/
+bxp_zoop<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "MMI_ZOOP_NLA6",
+  color="HydrAP_bin")
+#bxp_dd
+
+# Add p-values onto the box plots
+stat.test.zoop <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(MMI_ZOOP_NLA6~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+#stat.test.zoop
+
+stat.test.zoop<-stat.test.zoop%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_zoop_box <-bxp_zoop+stat_pvalue_manual(
+  stat.test.zoop, label="p", y.position = 90, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08) #,step.increase = 0.1)#+
+  #scale_y_continuous(expand = expansion(mult = c(0,0.1)))
+
+hydrap_zoop_box
+
+```
+
+Zooplankton MMI does not have conisstent patterns with HydrAP. In the West, zooplankton MMI decreased with HydrAP rank. In the UMW and CENPL, zooplankton MMI increased with HydrAP rank. There were no significant differences among HydrAP classes in the CPL and APPS.
+
+## TOTAL PHOSPHORUS and HydrAP
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# TP Boxplot w/ p-values 
+bxp_PTL<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "PTL",
+  color="HydrAP_bin")+
+  scale_y_log10()
+#bxp_PTL
+
+# Add p-values onto the box plots
+stat.test.tp <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(PTL~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+#stat.test.tp
+
+stat.test.tp<-stat.test.tp%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_PTL_box <-bxp_PTL+stat_pvalue_manual(
+  stat.test.tp, label="p", y.position = 5, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08) #,step.increase = 0.1)#+
+  #scale_y_continuous(expand = expansion(mult = c(0,0.1)))
+
+hydrap_PTL_box
+```
+
+## TOTAL NITROGEN and HydrAP
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# TN Boxplot w/ p-values 
+bxp_NTL<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "NTL",
+  color="HydrAP_bin")+
+  scale_y_log10()
+#bxp_NTL
+
+# Add p-values onto the box plots
+stat.test.tn <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(NTL~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+#stat.test.tn
+
+stat.test.tn<-stat.test.tn%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_NTL_box <-bxp_NTL+stat_pvalue_manual(
+  stat.test.tn, label="p", y.position = 7, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08) #,step.increase = 0.1)#+
+  #scale_y_continuous(expand = expansion(mult = c(0,0.1)))
+
+hydrap_NTL_box
+```
+
+Lake nutrient concentrations tend to increase with HydrAP rank across ecoregions. There often is an significant increase in mean TP and TN concentrations when comparing lakes with Low HydrAP ranks to lakes with Moderate or High ranks within ecoregions.   
+There was no significant difference in mean TP concentrations among HydrAP classes in the APPS and CENPL.
+
+## CHLa and HydrAP
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# CHLA Boxplot w/ p-values 
+bxp_CHLA<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "CHLA",
+  color="HydrAP_bin")+ #, add="jitter"
+  scale_y_log10()
+  #scale_y_continuous("Chla, log10", trans="log10")
+
+#bxp_CHLA<-ggplot(
+#  dat_red, aes(x=ECOP5_2015, y = CHLA,color=HydrAP_bin))+
+#  geom_boxplot()+
+#  geom_jitter(alpha=0.1)+
+#  scale_y_log10()+
+#  theme_classic()
+
+#bxp_CHLA
+
+#bxp_CHLA<-ggplot(
+#  dat_red, aes(x=ECOP5_2015, y = CHLA,color=HydrAP_bin,fill=HydrAP_bin))+
+#  geom_violin()+
+#  scale_y_log10()+
+#  theme_classic()
+
+# Add p-values onto the box plots
+stat.test.chla <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(CHLA~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+#stat.test.chla
+
+stat.test.chla<-stat.test.chla%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_CHLA_box <-bxp_CHLA+stat_pvalue_manual(
+  stat.test.chla, label="p", y.position = 5, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_CHLA_box
+```
+
+Chla concentrations do not show strong relationships with HydrAP ranks. 
+
+## Vertical DD and HydrAP
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Vertical dd Boxplot w/ p-values 
+bxp_vert<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "VERTDD_use",
+  color="HydrAP_bin")+
+  scale_y_log10()
+  #scale_y_continuous("Chla, log10", trans="log10")
+
+# Add p-values onto the box plots
+stat.test.vert <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(VERTDD_use~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.vert<-stat.test.vert%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_vert_box <-bxp_vert+stat_pvalue_manual(
+  stat.test.vert, label="p", y.position = 4, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_vert_box
+```
+
+## Horizontal DD and HydrAP
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Vertical dd Boxplot w/ p-values 
+bxp_horiz<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "HORIZDD_use",
+  color="HydrAP_bin")+
+  scale_y_log10()
+
+# Add p-values onto the box plots
+stat.test.horiz <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(HORIZDD_use~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.horiz<-stat.test.horiz%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_horiz_box <-bxp_horiz+stat_pvalue_manual(
+  stat.test.horiz, label="p", y.position = 5, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_horiz_box
+```
+
+Lake water-level decline increased with HydrAP rank in the West and CENPL. But it water level decline decreased in the CPL. There were no significant differences in mean water-level decline and HydrAP classes in the UMW and APPS. 
+
+
+## E:I and HydrAP
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#  Boxplot w/ p-values 
+bxp_ei<-ggboxplot(
+  dat_red, x="ECOP5_2015", y = "E_I",
+  color="HydrAP_bin")+
+  scale_y_log10()
+
+# Add p-values onto the box plots
+stat.test.ei <-dat_red %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(E_I~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.ei<-stat.test.ei%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_ei_box <-bxp_ei+stat_pvalue_manual(
+  stat.test.ei, label="p", y.position = 2, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_ei_box
+```
+
+
+Evaporation-to-inflow ratio decreases with greater HydrAP rank within most ecoregions. Lakes with greater potential anthropogenic hydro-alteration tend to be more flow through systems.
+
+
+## Macroinvert and EI class
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+dat_red_ei<-dat_red%>%
+  filter(!is.na(EI_class))
+
+#  Boxplot w/ p-values 
+bxp_mmi_ei<-ggboxplot(
+  dat_red_ei, x="ECOP5_2015", y = "MMI_BENT",
+  color="EI_class")#+
+  #scale_y_log10()
+
+# Add p-values onto the box plots
+stat.test.mmi.ei <-dat_red_ei %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(MMI_BENT~EI_class)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.mmi.ei<-stat.test.mmi.ei%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_mmi_ei_box <-bxp_mmi_ei+stat_pvalue_manual(
+  stat.test.mmi.ei, label="p", y.position = 90, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_mmi_ei_box
+```
+
+## Zooplankton and EI class
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#  Boxplot w/ p-values 
+bxp_zoop_ei<-ggboxplot(
+  dat_red_ei, x="ECOP5_2015", y = "MMI_ZOOP_NLA6",
+  color="EI_class")#+
+  #scale_y_log10()
+
+# Add p-values onto the box plots
+stat.test.zoop.ei <-dat_red_ei %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(MMI_ZOOP_NLA6~EI_class)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.zoop.ei<-stat.test.zoop.ei%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_zoop_ei_box <-bxp_zoop_ei+stat_pvalue_manual(
+  stat.test.zoop.ei, label="p", y.position = 90, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_zoop_ei_box
+```
+
+
+## NTL and EI class
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#  Boxplot w/ p-values 
+bxp_tn_ei<-ggboxplot(
+  dat_red_ei, x="ECOP5_2015", y = "NTL",
+  color="EI_class")+
+  scale_y_log10()
+
+# Add p-values onto the box plots
+stat.test.tn.ei <-dat_red_ei %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(NTL~EI_class)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.tn.ei<-stat.test.tn.ei%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_tn_ei_box <-bxp_tn_ei+stat_pvalue_manual(
+  stat.test.tn.ei, label="p", y.position = 7, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_tn_ei_box
+```
+
+## Scatterplots of lake water-level decline and MMI
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Plot MMI vs lake drawdown color coded by E:I class
+mmi_dd_scatter<-ggplot(dat_red, aes(x=HORIZDD_use, y=MMI_BENT))+ #,color=EI_class
+  geom_point() + 
+  geom_smooth(method="lm")+
+  scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+
+mmi_dd_scatter
+
+```
+
+# Scatterplot MMI and E:I by HydrAP class
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Plot MMI vs E:I by HydrAP classclass
+mmi_horiz_hydrap_scatter<-ggplot(dat_red, aes(x=HORIZDD_use, y=MMI_BENT, color=HydrAP_bin))+ #
+  geom_point() + 
+  geom_smooth(method="lm",se=FALSE)+
+  scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+
+mmi_horiz_hydrap_scatter
+
+```
+
+# Scatterplot TN and E:I by HydrAP class
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Plot 
+tn_vert_hydrap_scatter<-ggplot(dat_red, aes(x=VERTDD_use, y=NTL,color=HydrAP_bin))+#
+  geom_point() + 
+  geom_smooth(method="lm",se=FALSE)+
+  scale_y_log10()+
+  scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+
+tn_vert_hydrap_scatter
+
+```
+
+# Scatterplot TN and E:I by HydrAP class
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Plot MMI vs E:I by HydrAP classclass
+tn_hydrap_scatter<-ggplot(dat_red, aes(x=E_I, y=NTL,color=HydrAP_bin))+#
+  geom_point() + 
+  geom_smooth(method="lm",se=FALSE)+
+  scale_y_log10()+
+  scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+
+tn_hydrap_scatter
+
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE,eval=FALSE}
+# Summarize lake max depth by ecoregion
+zmax<-dat_red%>%
+  group_by(ECOP5_2015)%>%
+  summarise (mean_zmax=mean(DpthMx_use, na.rm=TRUE), sd=sd(DpthMx_use,na.rm=TRUE))
+
+#zmax
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE,eval=FALSE}
+## Table of Lake drawdown condition class by HydrAP class
+#Potential hydro-alteration classes are grouped as
+#HydrAP <3 = "Low"; HydrAP <= 5 = "Moderate"; HydrAP > 5 = "High"
+
+test<-as.data.frame(table(dat$Drawdown_CONDus15,dat$HydrAP_bin))
+test<-test%>%
+  pivot_wider(names_from=Var2, values_from = Freq)%>%
+  rename(Drawdown=Var1)%>%
+  mutate(Drawdown = fct_relevel(Drawdown, "SMALL", "MEDIUM",
+                                         "LARGE", "NOT ASSESSED"))
+
+
+knitr::kable(test, booktabs = TRUE) %>%
+  add_header_above(c(" " = 1, "HydrAP class" = 3))#, caption = "Lake Drawdown condition by HydrAP class")
+```
+
+
+## HABITAT and HydrAP - just 0712
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# 
+bxp_habitat<-ggboxplot(
+  nla0712, x="ECOP5_2015", y = "LitRipCvrQc15",
+  color="HydrAP_bin")#+
+  #scale_y_log10()
+
+# Add p-values onto the box plots
+stat.test.habitat <-nla0712 %>% 
+  group_by(ECOP5_2015)%>%
+  t_test(LitRipCvrQc15~HydrAP_bin)%>%
+  adjust_pvalue(method="bonferroni")%>%
+  add_significance("p.adj")
+
+
+stat.test.habitat<-stat.test.habitat%>%
+  add_xy_position(x="ECOP5_2015", dodge = 0.8)
+
+hydrap_habitat_box <-bxp_habitat+stat_pvalue_manual(
+  stat.test.habitat, label="p", y.position = 2, tip.length=0.01,
+  bracket.nudge.y = -2, step.group.by ="ECOP5_2015",step.increase = 0.08)
+
+hydrap_habitat_box
+```
+
+## Exploratory CFA of factors related to water mgmt
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+nla0712_dam<-nla0712%>%
+  mutate(NIDStorM3_sc = scale(NIDStorM3))%>% # /1000000000
+  mutate(elev_relief_m_sc = scale(elev_relief_m))%>% #/100
+  mutate(POP_DEN_sc = scale(POP_DEN))%>% #/1000
+  mutate(AvgWetIndxWs_sc = scale(AvgWetIndxWs))%>% #/100
+  mutate(PctAGR_Cat_sc = PctAGR_Cat/100,
+         PctIrrigated.AgLandWs_sc = PctIrrigated.AgLandWs/100,
+         PctAgDrainageWs_sc = PctAgDrainageWs/100,
+         PctDEVELOPED_Cat_sc = PctDEVELOPED_Cat/100)%>%
+  filter(!is.na(damht_zmax_full))
+
+wmgmt.model<-'dam =~ damht_zmax_full + NIDStorM3_sc + elev_relief_m_sc
+             agr =~ PctAGR_Cat_sc + PctIrrigated.AgLandWs_sc + PctAgDrainageWs_sc + AvgWetIndxWs_sc
+             urb =~ PctDEVELOPED_Cat_sc + POP_DEN_sc + hiiNonAg' #
+              
+
+#wmgmt.model<-'urb =~ PctDEVELOPED_Cat + POP_DEN_sc + hiiNonAg'
+# agr =~ PctAGR_Cat + PctIrrigated.AgLandWs + PctAgDrainageWs + AvgWetIndxWs
+# urb =~ PctDEVELOPED_Cat + POP_DEN + hiiNonAg
+
+fit <- cfa(wmgmt.model, data=nla0712_dam)#,group="ECOP5_2015"
+summary(fit, fit.measures=TRUE)
+```
+
+# Relationships between horizontal drawdown, habitat, and MMI
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(GGally)
+dat_red2<-nla0712%>%
+  select(L_HorizDD_use,LitCvrQc15,LitRipCvrQc15,E_I,MMI_BENT_NLA12)
+ggpairs(dat_red2)
+
+mmi_horiz<-ggplot(nla0712,aes(x=ZLOE_HorizDD_use,  y=MMI_BENT_NLA12))+ #HorizDD_use
+  geom_point() + 
+  geom_smooth(method="lm",se=FALSE)+
+  #scale_y_log10()+
+  #scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+mmi_horiz
+
+mmi_litthabitat<-ggplot(nla0712,aes(x=LitCvrQc3OE15,  y=MMI_BENT_NLA12))+ #LitCvrQc15
+  geom_point() + 
+  geom_smooth(method="lm",se=FALSE)+
+  #scale_y_log10()+
+  scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+
+mmi_litthabitat
+
+mmi_riphabitat<-ggplot(nla0712,aes(x=LitRipCvrQc15,  y=MMI_BENT_NLA12))+
+  geom_point() + 
+  geom_smooth(method="lm",se=FALSE)+
+  #scale_y_log10()+
+  scale_x_log10()+
+  facet_wrap(ECOP5_2015~.)
+mmi_riphabitat
+summary(lm(nla0712$MMI_BENT_NLA12~nla0712$LitRipCvrQc15))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+m1<-'ZLOE_HorizDD_use ~ hap_rank_9 + bffFlat_grad + P_WY
+     #LitCvrQc15 ~ hap_rank_9 + ZLOE_HorizDD_use + P_WY + LitRipCvrQc15
+     LitRipCvrQc15 ~ hap_rank_9 + ZLOE_HorizDD_use + P_WY
+     MMI_BENT_NLA12 ~ hap_rank_9 + ZLOE_HorizDD_use + LitRipCvrQc15 + LitCvrQc15 
+     
+     # Covariance
+     #ZLOE_HorizDD_use ~~LitRipCvrQc15
+'
+
+fit.sem<-sem(m1, data=nla0712,group="ECOP5_2015")
+
+summary(fit.sem, fit.measures=TRUE)
+
+# request modification indices greater than 3.0 - from Grace USGS materials
+mi_min <-modindices(fit.sem)
+print(mi_min[mi_min$mi >3.0,])
+
+# https://cran.r-project.org/web/packages/semptools/vignettes/semptools.html
+library(semPlot)
+library(semptools)
+
+path<-semPaths(fit.sem, title=FALSE, whatLabels = "est",intercepts = FALSE, residuals =FALSE)
+
+#path2 <- mark_sig(path, fit.sem)
+#plot(path2)
+
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+```
+
+
+
+

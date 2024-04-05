@@ -1,0 +1,432 @@
+---
+title: "HydrAP NLA17"
+author: "C. Emi Fergus"
+date: "2023-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Estimate HydrAP for NLA 2017 sites
+
+Gathered geospatial data from Marc, Karen, and online the NARS website to estimate the HydrAP variable - potential hydrological alteration of lake levels.
+Gathered information from NLA Visual Assessments OUTLET_DAMS
+NLCD land use summaries at the watershed and 200m lake buffer
+NABD dam attributes
+Irrigated Agriculture and drainage agriculture in 200m lake buffer
+See a_data_preprocessing_steps.R for original data and data processing steps
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+remove(list=ls())
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpmisc)
+library(ggpubr)
+library(broom)
+library(GGally)
+
+library(kableExtra)
+library(knitr)
+library(stringr)
+
+library(sf) # Simple Features works well with Tidyverse
+library(mapview)
+library(RColorBrewer)
+
+###########
+# READ PROCESSED NLA 2017 DATA
+dat<-read_csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/nla17_processed_for_Hydrap.csv")
+
+
+```
+
+## HydrAP Decision Tree Steps
+
+Lakes with no dams and no to minimal land use
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+################
+## ADD A NULL VARIABLE FOR RANKING
+dat$hap_rank_9 <- "na"
+
+
+############################
+## HYDAP RANKING v. 9b - revised to have irrigated ag up higher in decision tree
+
+##########################
+## Lakes rHydAP = 0 - no dams and no land use in watershed 
+
+# Lakes without dams with outlet control structures and with zero LU in the watershed 
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & dat$PCT_AG_URB_BSN <= 0] <- "0"
+
+table(dat$hap_rank_9)
+# 0   na 
+# 132 1078  
+
+#########################
+## Lakes HydrAP = 1 - no dams and minimal land use in direct drainage
+
+##  rHydAP = 1 (LU = 0-10%) 
+dat$hap_rank_9[!dat$hap_rank_9==0 & dat$OUTLET_DAMS_red2=="NONE" & dat$PCT_AG_URB_BSN <= 10] <- "1"
+table(dat$hap_rank_9)
+
+###################
+## Lakes with some land use
+## rHydAP = 2 (Agr & Urb 10-30%) n = 134
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & dat$PCT_AG_URB_BSN > 10 & dat$PCT_AG_URB_BSN <=30] <- "2"
+
+## rHydAP = 3 (Agr+Urb >30% AND IRRIG AG<=10 AND Ag Drain > 25% ) n = 11
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & #
+                 dat$PCT_AG_URB_BSN>30 &
+                 dat$IrrAg_pct<=10 &
+                 dat$AgDrain_pct>25] <- "3"
+
+## rHydAP = 5 (Agr+Urb >30% AND IRRIG AG > 10 ) n = 15 
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & #
+                 dat$PCT_AG_URB_BSN>30 &
+                 dat$IrrAg_pct>10] <- "5"
+
+
+## rHydAP = 4 (Agr+Urb >30% AND IRRIG AG <10 AND Ag Drain<= 25% AND TOTAL AG Adj>50 ) n = 86
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & #
+                 dat$PCT_AG_URB_BSN>30 &
+                 dat$IrrAg_pct<=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_AGRIC_200>50] <- "4"
+
+## rHydAP = 2 (Agr+Urb >30% AND IRRIG AG <10 AND Ag Drain<= 25% AND TOTAL AG Adj<50 AND Urb Adj<=25% ) n =149  
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & #
+                 dat$PCT_AG_URB_BSN>30 &
+                 dat$IrrAg_pct<=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_AGRIC_200<=50 &
+                 dat$PCT_DEVELOPED_200<=25] <- "2"
+
+## rHydAP = 3 (Agr+Urb >30% AND IRRIG AG <10 AND Ag Drain<= 25% AND TOTAL AG Adj<50 AND Urb Adj<=25% ) n =51  
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="NONE" & #
+                 dat$PCT_AG_URB_BSN>30 &
+                 dat$IrrAg_pct<=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_AGRIC_200<=50 &
+                 dat$PCT_DEVELOPED_200>25] <- "3"
+
+
+table(dat$hap_rank_9)
+#   0    1    2  3   4    5   na 
+#   132 158 176  82  38  14  610  
+```
+
+
+LOW TOPO RELIEF <=200 m and LOW LU <=50% in direct drainage  rHydAP = 2-4 
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+############
+##  rHydAP = 2 (dam ht/zmax =< 0.2)  n =11
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full<=0.2] <- "2"
+
+##########
+##  rHydAP = 3 (dam ht/zmax 0.2-0.5) n =9
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>0.2 & dat$damht_zmax_full<=0.5 ] <- "3"
+
+##########
+##  rHydAP = 4 (dam ht/zmax 0.5-1.5) n =81
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5 ] <- "4"
+
+##########
+##  rHydAP = 5 (dam ht/zmax 1.5-2.5) n = 99
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>1.5 & dat$damht_zmax_full<=2.0 ] <- "5"
+
+##  rHydAP = 6 (dam ht/zmax >2.5) n = 87
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>2.0 & dat$damht_zmax_full<=2.5] <- "6"
+
+##  rHydAP = 7 (dam ht/zmax >2.5) n = 113
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>2.5 ] <- "7"
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 176  86  66  48  21  41 482  
+```
+
+ LOW TOPO RELIEF <=200 m and HIGH LU >50% & High IRRIGA AGin direct drainage  rHydAP = 2-6 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+############
+##  rHydAP = 5 (dam ht/zmax =< 0.5) n = 2
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct >10 &
+                 dat$damht_zmax_full<=0.5] <- "5"
+
+##  rHydAP = 6 (dam ht/zmax = 0.5-1.5) n = 1
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct >10 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5] <- "6"
+
+##  rHydAP = 7 (dam ht/zmax >1.5) n = 8
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct >10 &
+                 dat$damht_zmax_full>1.5] <- "7"
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 176  86  66  49  22  45 476   
+
+############
+## Non-Irrigated agriculture & High Agr Drainage
+##  rHydAP = 3 (dam ht/zmax <=0.5) n = 2
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct>25 &
+                 dat$damht_zmax_full<=0.5] <- "3"
+
+##  rHydAP = 4 (dam ht/zmax = 0.5-1.5) n = 0
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct>25 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5] <- "4"
+
+##  rHydAP = 5 (dam ht/zmax >1.5 ) #n = 8
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct>25 &
+                 dat$damht_zmax_full>1.5] <- "5" # 
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 176  87  66  53  22  45 471 
+
+###############
+## NON-IRRIGATED AG & LOW Ag DRAINAGE & LOW URB
+##  rHydAP = 4 (dam ht/zmax <=0.5) n = 22
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200<=25 &
+                 dat$damht_zmax_full<=0.5] <- "4"
+
+##  rHydAP = 5 (dam ht/zmax = 0.5-1.5) n = 12
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200<=25 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5] <- "5"
+
+##  rHydAP = 6 (dam ht/zmax 1.5-2.5 ) #n = 48
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200<=25 &
+                 dat$damht_zmax_full>1.5 & dat$damht_zmax_full<=2.5] <- "6" # 
+
+##  rHydAP =7  (dam ht/zmax >2.5 ) #n = 62
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200<=25 &
+                 dat$damht_zmax_full>2.5 ] <- "7" #
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 176  87  66  53  29  58 451  
+
+################
+## HIGH URBAN 
+## rHydAP = 3 n = 3
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200>25 &
+                 dat$damht_zmax_full<=0.5] <- "3"
+
+##  rHydAP = 4 (dam ht/zmax = 0.5-1.5) n = 3
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200>25 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5] <- "4"
+
+##  rHydAP = 5 (dam ht/zmax >1.5 ) #n = 15
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m<=200 & dat$PCT_AG_URB_BSN > 50 &
+                 dat$IrrAg_pct <=10 &
+                 dat$AgDrain_pct<=25 &
+                 dat$PCT_DEVELOPED_200>25 &
+                 dat$damht_zmax_full>1.5] <- "5" # 
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 176  90  68  59  29  58 440   
+
+
+
+########################
+##  MOD TOPO RELIEF 200-700m - 
+########################  
+##  rHydAP = 2 (dam ht/zmax =< 0.2)  # n = 9
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full<=0.2] <- "2"
+
+##  rHydAP = 4 (dam ht/zmax 0.2-0.5)  # n=10
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>0.2 & dat$damht_zmax_full<=0.5] <- "4"
+
+##  rHydAP = 5 (dam ht/zmax 0.5-1.5)  # n=36
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN <= 50 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5] <- "5"
+
+###########
+##  rHydAP = 6 (dam ht/zmax 1.5-2.5) n = 68
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN <=50 &
+                 dat$damht_zmax_full>1.5 & dat$damht_zmax_full<=2.5] <- "6"
+
+###########
+##  rHydAP = 7 (dam ht/zmax >2.5) n = 62
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN <=50 &
+                 dat$damht_zmax_full>2.5 ] <- "7"
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 178  90  71  76  48  74 383 
+
+
+###################
+##  rHydAP = 5 (dam ht/zmax =< 0.5)  n = 0
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN>50 &
+                 dat$damht_zmax_full<=0.5] <- "5"
+
+###########
+##  rHydAP = 6 (dam ht/zmax  0.5-1.5) n = 11
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN >50 &
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5 ] <- "6"
+###########
+##  rHydAP = 7 (dam ht/zmax >1.5) n = 7
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 200 & dat$elev_relief_m <= 700 &
+                 dat$PCT_AG_URB_BSN >50 &
+                 dat$damht_zmax_full>1.5 ] <- "7"
+
+table(dat$hap_rank_9)
+#  0   1   2   3   4   5   6   7  na 
+#132 158 178  90  71  76  48  75 382      
+
+```
+
+
+HIGH TOPO RELIEF >700m - Dropped the land use classes because have same rankings
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+########################  
+##  rHydAP = 2 (dam ht/zmax =< 0.2)  # n = 11
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 700 & 
+                 dat$damht_zmax_full<=0.2] <- "2"
+
+##  rHydAP = 4 (dam ht/zmax 0.2- 0.5)  # n = 8
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 700 & 
+                 dat$damht_zmax_full>0.2 & dat$damht_zmax_full<=0.5] <- "4"
+
+###########
+##  rHydAP = 5 (dam ht/zmax  0.5-1.5) n = 50
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m >700 & 
+                 dat$damht_zmax_full>0.5 & dat$damht_zmax_full<=1.5 ] <- "5"
+###########
+##  rHydAP = 6 (dam ht/zmax >1.5) n = 74
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 700 & 
+                 dat$damht_zmax_full>1.5 & dat$damht_zmax_full<=2.5 ] <- "6"
+
+###########
+##  rHydAP = 7 (dam ht/zmax >2.5) n = 72
+dat$hap_rank_9[dat$OUTLET_DAMS_red2=="DAM" & 
+                 dat$elev_relief_m > 700 & 
+                 dat$damht_zmax_full>2.5] <- "7"
+
+table(dat$hap_rank_9)
+# 0   1   2   3   4   5   6   7  na 
+#132 158 184  90  74  81  62  89 340
+
+test<-dat%>%
+  filter(hap_rank_9=="na")%>%
+  select(SITE_ID,LAT_DD83,LON_DD83,hap_rank_9,damht_zmax_full,DpthMx_use,
+         NID_ht_m,elev_relief_m,OUTLET_DAMS_red2,PCT_AG_URB_BSN,PCT_AG_URB_200)
+summary(test$NID_ht_m)
+summary(test)
+table(test$OUTLET_DAMS_red2)
+#DAM NONE 
+ #339    1
+# There are 338 observations missing dam attributes
+# 1 obsrvation missing basin land use
+# 3 observations missing max depth
+# Write subset with hydrap=na that are said to have dams visually present but lack NID data
+#nla17_miss_dam<-dat%>%
+#  filter(hap_rank_9=="na")%>%
+#  filter(OUTLET_DAMS_red2=="DAM")%>%
+#  filter(is.na(NID_height))%>%
+#  select(SITE_ID,VISIT_NO,OUTLET_DAMS_red2,NID_ht_m,hap_rank_9)
+
+#write.csv(nla17_miss_dam,"C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/NLA17_miss_dam.csv",row.names = FALSE)
+```
+
+
+ PROCESS DATA
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+# CHANGE hap_rank_9 "na" to NA
+# https://www.statmethods.net/input/missingdata.html
+dat$hap_rank_9[dat$hap_rank_9=="na"] <- NA
+
+#table(dat$hap_rank_9)
+
+# Integer to numeric
+dat$hap_rank_9<-as.numeric(dat$hap_rank_9)
+
+
+########################
+## WRITE DATASET WITH RANKINGS
+write.csv(dat,"C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/NLA17_HydAP.csv",row.names = FALSE)
+
+```
+
+
+

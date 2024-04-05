@@ -1,0 +1,339 @@
+---
+title: "HydrAP NL17 data explore"
+author: "C. Emi Fergus"
+date: "2023-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## HydrAP variable exploration NLA 2017
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpmisc)
+library(ggpubr)
+library(broom)
+
+library(grid)
+library(gridExtra)
+
+library(kableExtra)
+library(knitr)
+library(stringr)
+
+# LOAD DATA
+##############
+## READ PROCESSED NLA 2017 DATA 
+# PROCESSED - 
+#  VISITS 1 and 2 n = 1210 w/ 274 vars
+dat<-read.csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/NLA17_HydAP.csv")
+
+# NLA 2017 Hydrap and isotope n = 1210 w/ 279 variables
+nla17<-read.csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/Data_Alan_2023_1104/nla17_hydrap_isotope_full.csv")
+
+nla17<-nla17%>%
+  mutate(hydrap=hap_rank_9)#%>%
+  #mutate(as_factor(hydrap))
+```
+
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+dat<-dat%>%
+  mutate(hydrap = hap_rank_9)%>%
+  mutate(is.factor(hydrap)) #
+table(dat$hydrap)
+# 0   1   2   3   4   5   6   7 
+#157 249 294 157 105  94  62  89 
+#n = 1207 (only 3 obs are missing HydrAP rank)
+
+plot(dat$HORIZDD_use,dat$hydrap)
+
+plot(dat$VERTDD_use,dat$hydrap)
+
+```
+
+
+## Map of HydrAP ranks
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+library(maps)
+library(mapdata)
+#library(maptools)
+library(ggmap)
+library(sf)
+library("rnaturalearth")
+library("rnaturalearthdata")
+
+world<-ne_countries(scale="medium",returnclass="sf")
+state<-map_data("state")
+## READ SHAPEFILE - copied and pasted ecoregion 9 shapefile on laptop
+eco <-read_sf("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_Water_Level/Data/GIS/ECOREG_9/ecoreg9_2015.shp")
+
+eco<-eco %>%
+  mutate(ECO_5 = case_when (
+    (WSA9 %in% c('WMT','XER'))~'West',
+    (WSA9 %in% c('NPL','SPL'))~'Great Plains',
+    (WSA9 %in% c('UMW','TPL'))~'Midwest',
+    (WSA9 %in% c('NAP','SAP'))~'Appalachians',
+    (WSA9 %in% c('CPL'))~'Coastal Plains')) %>%
+  group_by(ECO_5) %>%
+  summarise()
+```
+
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+##########
+## Plot specifications
+###########
+
+## Set font for plot
+windowsFonts(RMN=windowsFont("Times New Roman")) #RMN = Times New Roman
+
+dat$hydrap<-as.factor(dat$hydrap)
+
+################
+## MAKE MAP
+# https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-2.html
+# http://www.sthda.com/english/wiki/ggplot2-colors-how-to-change-colors-automatically-and-manually
+###############
+eco<- st_transform(eco, 4269)
+# Order ecoregions for gray color assignment
+eco$ECO_5<-ordered(eco$ECO_5, levels=c("Great Plains","Appalachians","West","Midwest",
+                                                     "Coastal Plains"))
+
+
+#NLA sites
+sites <-st_as_sf(dat, coords = c("LON_DD83","LAT_DD83"),
+                 crs=4269)
+
+# State outlines
+states<-st_as_sf(map("state",plot=FALSE, fill=TRUE, color="gray"))
+
+# MAP
+map_rank <-ggplot(data=world, color="gray90")+
+  geom_sf(data=eco, aes(fill=factor(eco$ECO_5))) +
+  scale_fill_grey(start=0.3,end=0.8, guide=FALSE)+
+  #scale_fill_manual(values=c("grey89","grey89","grey99","grey99","grey80","grey80","grey85","grey85","grey92"))+ #
+  geom_sf(data=states, fill=NA, color="grey19")+
+  geom_sf(data=sites, aes(colour=sites$hydrap))+
+  scale_color_manual(values= c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value = "#404040")+ #"gray"
+  geom_sf_label(data=eco, aes(label=ECO_5,family="RMN"),label.size=0.5,show.legend=F)+
+  coord_sf(xlim=c(-129, -65), ylim = c(24, 51), expand = FALSE)+
+  theme_bw()+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5),
+        axis.text=element_text(family = "RMN"),
+        #axis.line=element_blank(),
+        #axis.ticks=element_blank(),
+        legend.text = element_text(family = "RMN"),
+        legend.title=element_text(family = "RMN"), # element_blank()
+        #panel.border=element_blank(),#
+        # panel.grid=element_blank(),
+        axis.title=element_blank(),
+        legend.background = element_rect(fill = "gray90"), #lightgray
+        legend.key = element_rect(fill = "gray90", color = NA),
+        legend.position = "bottom")+
+  labs(color = "HydrAP rank")+
+  ggtitle("") #"Hydrologic alteration potential"
+  
+map_rank 
+```
+
+## BOXPLOTS
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+##################
+# HORIZONTAL DD
+HorizDD_box<-ggplot(nla17, aes(x=factor(hydrap), y = HORIZDD_use+0.1))+#,fill=factor(YEAR))+
+  geom_boxplot(aes(fill=factor(hydrap),y=HORIZDD_use+0.1),outlier.shape=NA)+#,stat="identity")+
+  scale_y_continuous(trans="log10",limits=c(NA,300),labels=function(x) format(x,scientific = FALSE))+ #,  breaks=c(25,100,500,1000,2000,3500)) +
+  stat_compare_means(label="p.format",size=2.5,family="RMN",label.x=2)+ # KRUSKAL WALLIS GRP MEAN TEST
+  scale_fill_manual(values = c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value="gray")+
+  geom_jitter(width=0.1, alpha=0.2)+
+  facet_wrap(~AG_ECO3,ncol=9)+
+  theme_bw(base_size=12)+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5), 
+        axis.text.x = element_text(family = "RMN", angle=45, hjust=1),
+        axis.text.y = element_text(family = "RMN"),
+        axis.title.y=element_text(family="RMN"),
+        axis.title.x=element_text(family="RMN"),
+        panel.grid.major =  element_line(colour = NA), 
+        panel.grid.minor=element_line(colour = NA),
+        strip.text = element_text(family = "RMN"),
+        # panel.spacing = unit(c(1,1,0,4), "lines"),
+        legend.position="none")+#c(0.90,0.25),#"right" # 1st = x-axis (0-1), 2nd = y-axis (0-1)
+  #ggtitle("CPL")+
+  labs(#title="\nAn example",
+    #subtitle="using font Decima WE",
+    #caption="Notes: probably compliant with the new logo font ARPA-FVG\n",
+    x=expression("HydAP rank v.9"),
+    y=expression("Horizontal DD (m)"))
+
+HorizDD_box
+
+# VERTICA DD
+VertDD_box<-ggplot(nla17, aes(x=factor(hydrap), y = VERTDD_use+0.1))+#,fill=factor(YEAR))+
+  geom_boxplot(aes(fill=factor(hydrap),y=VERTDD_use+0.1),outlier.shape=NA)+#,stat="identity")+
+  scale_y_continuous(trans="log10",limits=c(NA,300),labels=function(x) format(x,scientific = FALSE))+ #,  breaks=c(25,100,500,1000,2000,3500)) +
+  stat_compare_means(label="p.format",size=2.5,family="RMN",label.x=2)+ # KRUSKAL WALLIS GRP MEAN TEST
+  scale_fill_manual(values = c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value="gray")+
+  geom_jitter(width=0.1, alpha=0.2)+
+  facet_wrap(~AG_ECO3,ncol=9)+
+  theme_bw(base_size=12)+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5), 
+        axis.text.x = element_text(family = "RMN", angle=45, hjust=1),
+        axis.text.y = element_text(family = "RMN"),
+        axis.title.y=element_text(family="RMN"),
+        axis.title.x=element_text(family="RMN"),
+        panel.grid.major =  element_line(colour = NA), 
+        panel.grid.minor=element_line(colour = NA),
+        strip.text = element_text(family = "RMN"),
+        # panel.spacing = unit(c(1,1,0,4), "lines"),
+        legend.position="none")+#c(0.90,0.25),#"right" # 1st = x-axis (0-1), 2nd = y-axis (0-1)
+  #ggtitle("CPL")+
+  labs(#title="\nAn example",
+    #subtitle="using font Decima WE",
+    #caption="Notes: probably compliant with the new logo font ARPA-FVG\n",
+    x=expression("HydAP rank v.9"),
+    y=expression("Vertical DD (m)"))
+
+VertDD_box
+```
+
+## Isotope derived variables
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+##################
+# E:I Evaporation to inflow ratio
+EI_box<-ggplot(nla17, aes(x=factor(hydrap), y = E_I))+#,fill=factor(YEAR))+
+  geom_boxplot(aes(fill=factor(hydrap),y=E_I),outlier.shape=NA)+#,stat="identity")+
+  #scale_y_continuous(trans="log10",limits=c(NA,300),labels=function(x) format(x,scientific = FALSE))+ #,  breaks=c(25,100,500,1000,2000,3500)) +
+  stat_compare_means(label="p.format",size=2.5,family="RMN",label.x=2)+ # KRUSKAL WALLIS GRP MEAN TEST
+  scale_fill_manual(values = c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value="gray")+
+  geom_jitter(width=0.1, alpha=0.2)+
+  facet_wrap(~AG_ECO3,ncol=9)+
+  theme_bw(base_size=12)+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5), 
+        axis.text.x = element_text(family = "RMN", angle=45, hjust=1),
+        axis.text.y = element_text(family = "RMN"),
+        axis.title.y=element_text(family="RMN"),
+        axis.title.x=element_text(family="RMN"),
+        panel.grid.major =  element_line(colour = NA), 
+        panel.grid.minor=element_line(colour = NA),
+        strip.text = element_text(family = "RMN"),
+        # panel.spacing = unit(c(1,1,0,4), "lines"),
+        legend.position="none")+#c(0.90,0.25),#"right" # 1st = x-axis (0-1), 2nd = y-axis (0-1)
+  #ggtitle("CPL")+
+  labs(#title="\nAn example",
+    #subtitle="using font Decima WE",
+    #caption="Notes: probably compliant with the new logo font ARPA-FVG\n",
+    x=expression("HydAP rank v.9"),
+    y=expression("Evaporation:inflow"))
+
+EI_box
+
+# Isotopically derived water residence time
+RT_box<-ggplot(nla17, aes(x=factor(hydrap), y = RT_iso))+#,fill=factor(YEAR))+
+  geom_boxplot(aes(fill=factor(hydrap),y=RT_iso),outlier.shape=NA)+#,stat="identity")+
+  #scale_y_continuous(trans="log10",limits=c(NA,300),labels=function(x) format(x,scientific = FALSE))+ #,  breaks=c(25,100,500,1000,2000,3500)) +
+  stat_compare_means(label="p.format",size=2.5,family="RMN",label.x=2)+ # KRUSKAL WALLIS GRP MEAN TEST
+  scale_fill_manual(values = c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value="gray")+
+  geom_jitter(width=0.1, alpha=0.2)+
+  facet_wrap(~AG_ECO3,ncol=9)+
+  theme_bw(base_size=12)+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5), 
+        axis.text.x = element_text(family = "RMN", angle=45, hjust=1),
+        axis.text.y = element_text(family = "RMN"),
+        axis.title.y=element_text(family="RMN"),
+        axis.title.x=element_text(family="RMN"),
+        panel.grid.major =  element_line(colour = NA), 
+        panel.grid.minor=element_line(colour = NA),
+        strip.text = element_text(family = "RMN"),
+        # panel.spacing = unit(c(1,1,0,4), "lines"),
+        legend.position="none")+#c(0.90,0.25),#"right" # 1st = x-axis (0-1), 2nd = y-axis (0-1)
+  #ggtitle("CPL")+
+  labs(#title="\nAn example",
+    #subtitle="using font Decima WE",
+    #caption="Notes: probably compliant with the new logo font ARPA-FVG\n",
+    x=expression("HydAP rank v.9"),
+    y=expression("Water residence"))
+
+RT_box
+
+```
+
+## NLA 2012 Exploration
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# NLA 2012 HydrAP & E:I - Note: only VISIT_NO=1 n = 1038
+nla12_hydrap<-read.csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_Water_Level/Analysis/a_Lake_managed_class/Data/ECOREGION/ALL_ECO/Data_for_manuscript/NLA2012_n1038_HydAP_v9_RESAMPLED.csv")
+
+nla12 <- nla12_hydrap%>%
+  mutate(hydrap=hap_rank_9)
+```
+
+
+## BOXPLOTS NLA 2012
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+##################
+# TN
+TN_box<-ggplot(nla12, aes(x=factor(hydrap), y = NTL))+#,fill=factor(YEAR))+
+  geom_boxplot(aes(fill=factor(hydrap),y=NTL),outlier.shape=NA)+#,stat="identity")+
+  scale_y_continuous(trans="log10",limits=c(NA,1000),labels=function(x) format(x,scientific = FALSE))+ #,  breaks=c(25,100,500,1000,2000,3500)) +
+  stat_compare_means(label="p.format",size=2.5,family="RMN",label.x=2)+ # KRUSKAL WALLIS GRP MEAN TEST
+  scale_fill_manual(values = c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value="gray")+
+  geom_jitter(width=0.1, alpha=0.2)+
+  facet_wrap(~ECOP5_2015,ncol=9)+
+  theme_bw(base_size=12)+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5), 
+        axis.text.x = element_text(family = "RMN", angle=45, hjust=1),
+        axis.text.y = element_text(family = "RMN"),
+        axis.title.y=element_text(family="RMN"),
+        axis.title.x=element_text(family="RMN"),
+        panel.grid.major =  element_line(colour = NA), 
+        panel.grid.minor=element_line(colour = NA),
+        strip.text = element_text(family = "RMN"),
+        # panel.spacing = unit(c(1,1,0,4), "lines"),
+        legend.position="none")+#c(0.90,0.25),#"right" # 1st = x-axis (0-1), 2nd = y-axis (0-1)
+  #ggtitle("CPL")+
+  labs(#title="\nAn example",
+    #subtitle="using font Decima WE",
+    #caption="Notes: probably compliant with the new logo font ARPA-FVG\n",
+    x=expression("HydAP rank v.9"),
+    y=expression("TN"))
+
+TN_box
+
+
+# CHLA
+chla_box<-ggplot(nla12, aes(x=factor(hydrap), y = CHLA))+#,fill=factor(YEAR))+
+  geom_boxplot(aes(fill=factor(hydrap),y=CHLA),outlier.shape=NA)+#,stat="identity")+
+  scale_y_continuous(trans="log10",limits=c(NA,600),labels=function(x) format(x,scientific = FALSE))+ #,  breaks=c(25,100,500,10000,2000,3500)) +
+  stat_compare_means(label="p.format",size=2.5,family="RMN",label.x=2)+ # KRUSKAL WALLIS GRP MEAN TEST
+  scale_fill_manual(values = c("#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027"),na.value="gray")+
+  geom_jitter(width=0.1, alpha=0.2)+
+  facet_wrap(~ECOP5_2015,ncol=9)+
+  theme_bw(base_size=12)+
+  theme(plot.title = element_text(family = "RMN",face="plain",size=14, hjust=0.5), 
+        axis.text.x = element_text(family = "RMN", angle=45, hjust=1),
+        axis.text.y = element_text(family = "RMN"),
+        axis.title.y=element_text(family="RMN"),
+        axis.title.x=element_text(family="RMN"),
+        panel.grid.major =  element_line(colour = NA), 
+        panel.grid.minor=element_line(colour = NA),
+        strip.text = element_text(family = "RMN"),
+        # panel.spacing = unit(c(1,1,0,4), "lines"),
+        legend.position="none")+#c(0.90,0.25),#"right" # 1st = x-axis (0-1), 2nd = y-axis (0-1)
+  #ggtitle("CPL")+
+  labs(#title="\nAn example",
+    #subtitle="using font Decima WE",
+    #caption="Notes: probably compliant with the new logo font ARPA-FVG\n",
+    x=expression("HydAP rank v.9"),
+    y=expression("CHLA"))
+
+chla_box
+```
+
+
+
+

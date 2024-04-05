@@ -1,0 +1,101 @@
+---
+title: "Process NLA12 and 17 data for Alan"
+author: "C. Emi Fergus"
+date: "2023-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Compile processed NLA data to share with Alan and coauthors
+
+Data are for NLA 2012 and 2017
+Includes HydrAP rank, variables used to derive HydrAP, and water isotope information
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+remove(list=ls())
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpmisc)
+library(ggpubr)
+library(broom)
+
+library(kableExtra)
+library(knitr)
+library(stringr)
+
+```
+
+Load procssed NLA 2012 datasets to merge
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+# NLA 2012 HydrAP & E:I - Note: only VISIT_NO=1 n = 1038
+nla12_hydrap<-read.csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_Water_Level/Analysis/a_Lake_managed_class/Data/ECOREGION/ALL_ECO/Data_for_manuscript/NLA2012_n1038_HydAP_v9_RESAMPLED.csv")
+
+table(nla12_hydrap$VISIT_NO)
+
+nla12_hydrap_iso<-nla12_hydrap%>%
+  select(SITE_ID,VISIT_NO,YEAR,LATdd_use,LONdd_use,
+         d_excess,E_I,dD,d18O,RT_iso,
+         PctIrrigated.AgLandWs,PctIrrigated.AgLandCat,
+         PctAgDrainageWs,PctAgDrainageCat,
+         ELEVMAX_BSN_m,ELEV_use,elev_relief_m,
+         OUTLET_DAMS,OUTLET_DAMS_red2,NID_ht_m,damht_zmax_full,
+         hap_rank_9)%>%
+  rename(hydrap = hap_rank_9)
+
+```
+
+
+Load processed NLA 2017 datasets to merge
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+# NLA 2017 Isotope data n =1124 (1030 visit 1; 94 visit 2)
+nla17_iso<-read_csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/NLA_lake_hydrology/NLA17 Water Isotope Data/NLA17_EI_calculations/NLA17_EI_estimates_220316.csv")
+# Note there are also estimates in the ANalysis folder - but I think it may be an older version
+
+nla17_iso_red<-nla17_iso%>%
+  select(SITE_ID,VISIT_NO,
+        d_excess,E_I,dD,d18O,RT_iso)
+
+nla17_hydrap<-read_csv("C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/NLA17_HydAP.csv")
+
+# NOTE Irrigated Ag and Drainage Ag AND Maximum elevlation
+# are summarized in the old NLA 17 watershed - may be an issue...
+
+# JOIN NLA 17 datasets
+nla17_hydrap_iso<-left_join(nla17_hydrap, nla17_iso_red, by=c("SITE_ID","VISIT_NO"))
+
+nla17_hydrap_iso_red<-nla17_hydrap_iso%>%
+  select(SITE_ID,VISIT_NO,
+         IrrAg_pct,
+         AgDrain_pct,
+         MaxElev,Elev_Pt,elev_relief_m,
+         OUTLET_DAMS,OUTLET_DAMS_red2,NID_ht_m,damht_zmax_full,
+         hap_rank_9)%>%
+  rename(hydrap=hap_rank_9)
+
+
+
+```
+
+
+# WRITE DATA
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+# NLA 2012 n = 1038
+write.csv(nla12_hydrap_iso,"C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/Data_Alan_2023_1104/nla12_hydrap_isotope.csv",row.names = FALSE)
+
+# NLA 2017 n = 1210 w/ 12 variables
+write.csv(nla17_hydrap_iso_red,"C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/Data_Alan_2023_1104/nla17_hydrap_isotope.csv",row.names = FALSE)
+
+# NLA 2017 n = 120 w/ 279 variables
+write.csv(nla17_hydrap_iso,"C:/Users/EFergus/OneDrive - Environmental Protection Agency (EPA)/a_NLA_MMI_project/Processed_data/Data_Alan_2023_1104/nla17_hydrap_isotope_full.csv",row.names = FALSE)
+```
+
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+```
+
